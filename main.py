@@ -1,10 +1,26 @@
 import asyncio
+import html
 import logging
+from collections.abc import Callable
 
 import aiohttp
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup
+
+from src.categories import category_profile_title
+from src.category_storage import (
+    load_catalog,
+    load_selected_category_ids,
+    save_catalog,
+    save_selected_category_ids,
+    toggle_selected_category,
+)
+from src.config import Settings
+from src.kwork_sdk import KworkSDKAdapter, KworkSDKConfig, KworkSDKUnavailable
+from src.notifier import publish_order_ids
+from src.scraper import CATEGORY_IDS, discover_categories, fetch_page_result, get_token_result, is_recent
+from src.storage import load as load_seen, locked_seen_ids, save as save_seen
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,95 +28,301 @@ logging.basicConfig(
 )
 logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logging.getLogger("aiogram").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("pykwork").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-from src.config import Settings
-from src.notifier import publish
-from src.scraper import CATEGORY_IDS, fetch_page, get_token, is_recent
-from src.storage import load as load_seen, save as save_seen
+OrderPredicate = Callable[[dict, set[str]], bool]
+
+HTTP_TIMEOUT_SECONDS = 30
+PAGE_REQUEST_PAUSE_SECONDS = 1
+TELEGRAM_MESSAGE_LIMIT = 4000
+FIRST_PAGE = 1
+CATEGORY_PAGE_SIZE = 8
+
+BTN_CHECK_NOW = "🔍 Проверить сейчас"
+BTN_STATUS = "📊 Статус"
+BTN_LAST_24H = "📅 Заказы за 24 часа"
+BTN_CATEGORIES = "📂 Категории"
+BTN_DEBUG = "🔬 Диагностика"
 
 settings = Settings()
-bot = Bot(token=settings.bot_token)
+bot: Bot | None = None
 dp = Dispatcher()
+_poll_lock = asyncio.Lock()
+_active_category_ids: set[int] | None = None
+_category_catalog = load_catalog()
 
 MAIN_KB = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🔍 Проверить сейчас"), KeyboardButton(text="📊 Статус")],
-        [KeyboardButton(text="📅 Заказы за 24 часа"), KeyboardButton(text="📂 Категории")],
-        [KeyboardButton(text="🔬 Диагностика")],
+        [KeyboardButton(text=BTN_CHECK_NOW), KeyboardButton(text=BTN_STATUS)],
+        [KeyboardButton(text=BTN_LAST_24H), KeyboardButton(text=BTN_CATEGORIES)],
+        [KeyboardButton(text=BTN_DEBUG)],
     ],
     resize_keyboard=True,
 )
 
 
 def is_admin(message: Message) -> bool:
-    return message.from_user is not None and message.from_user.id in settings.admin_id_list()
+    """Check whether the incoming Telegram message was sent by an admin."""
 
+    return message.from_user is not None and is_admin_id(message.from_user.id)
+
+
+def is_admin_id(user_id: int) -> bool:
+    """Check whether Telegram user id belongs to a configured admin."""
+
+    return user_id in settings.admin_ids
+
+
+def configure_runtime(app_settings: Settings | None = None) -> None:
+    """Configure validated settings, Telegram bot and active categories."""
+
+    global bot, settings, _active_category_ids
+
+    settings = app_settings or settings
+    settings.validate()
+    selected_category_ids = load_selected_category_ids()
+    _active_category_ids = selected_category_ids or settings.active_category_ids()
+    bot = Bot(token=settings.bot_token)
+
+
+def active_categories() -> set[int]:
+    """Return category ids used by this bot process."""
+
+    selected_category_ids = load_selected_category_ids()
+    if selected_category_ids:
+        return selected_category_ids
+    return set(_active_category_ids or CATEGORY_IDS)
+
+
+def refresh_active_categories() -> None:
+    """Refresh active categories from user selection storage."""
+
+    global _active_category_ids
+
+    selected_category_ids = load_selected_category_ids()
+    _active_category_ids = selected_category_ids or settings.active_category_ids()
+
+
+def get_bot() -> Bot:
+    """Return the configured Telegram bot instance."""
+
+    if bot is None:
+        configure_runtime()
+    if bot is None:
+        raise RuntimeError("Telegram bot is not configured")
+    return bot
+
+
+async def _get_kwork_token(session: aiohttp.ClientSession, log_context: str) -> str | None:
+    result = await get_token_result(session, settings.kwork_login, settings.kwork_password, settings.kwork_phone)
+    if not result.ok:
+        logger.error("Could not obtain Kwork API token, skipping %s: %s", log_context, result.error)
+    return result.token
+
+
+async def refresh_category_catalog() -> tuple[int, str | None]:
+    """Fetch Kwork categories discovered from API data and save them locally."""
+
+    global _category_catalog
+
+    sdk_result = await _refresh_category_catalog_with_sdk()
+    if sdk_result is not None:
+        return sdk_result
+
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        token = await _get_kwork_token(session, "category discovery")
+        if not token:
+            return len(_category_catalog), "Не удалось получить токен Kwork API."
+
+        result = await discover_categories(session, token=token)
+        if result.categories:
+            _category_catalog = result.categories
+            save_catalog(_category_catalog)
+        return len(_category_catalog), result.error
+
+
+async def _refresh_category_catalog_with_sdk() -> tuple[int, str | None] | None:
+    global _category_catalog
+
+    try:
+        async with KworkSDKAdapter(_kwork_sdk_config()) as client:
+            categories = await client.get_categories()
+    except KworkSDKUnavailable:
+        return None
+    except Exception as exc:
+        logger.warning("Kwork SDK category discovery failed, falling back to legacy API: %s", exc)
+        return None
+
+    if categories:
+        _category_catalog = categories
+        save_catalog(_category_catalog)
+    return len(_category_catalog), None
+
+
+def _kwork_sdk_config() -> KworkSDKConfig:
+    return KworkSDKConfig(
+        login=settings.kwork_login,
+        password=settings.kwork_password,
+        phone=settings.kwork_phone,
+        timeout=HTTP_TIMEOUT_SECONDS,
+    )
+
+
+def category_keyboard(page: int = 0) -> InlineKeyboardMarkup:
+    """Build inline keyboard for category selection."""
+
+    categories = sorted(_category_catalog.values(), key=lambda item: (item.group, item.name, item.id))
+    selected = load_selected_category_ids()
+    pages = max(1, (len(categories) + CATEGORY_PAGE_SIZE - 1) // CATEGORY_PAGE_SIZE)
+    page = max(0, min(page, pages - 1))
+    start = page * CATEGORY_PAGE_SIZE
+    page_categories = categories[start : start + CATEGORY_PAGE_SIZE]
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{'✅' if category.id in selected else '☐'} {category.id} · {category.name}",
+                callback_data=f"cat:toggle:{category.id}:{page}",
+            )
+        ]
+        for category in page_categories
+    ]
+
+    navigation = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton(text="←", callback_data=f"cat:page:{page - 1}"))
+    navigation.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data=f"cat:page:{page}"))
+    if page < pages - 1:
+        navigation.append(InlineKeyboardButton(text="→", callback_data=f"cat:page:{page + 1}"))
+    rows.append(navigation)
+    rows.append([InlineKeyboardButton(text="🔄 Обновить список", callback_data=f"cat:refresh:{page}")])
+    rows.append([InlineKeyboardButton(text="Сбросить выбор", callback_data=f"cat:reset:{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def category_selection_text() -> str:
+    """Build category selection summary."""
+
+    selected = load_selected_category_ids()
+    active = sorted(active_categories())
+    mode = "выбор пользователя" if selected else "профиль по умолчанию"
+    return (
+        "<b>Категории заказов</b>\n\n"
+        f"Режим: {html.escape(mode, quote=False)}\n"
+        f"Активные category_id: {active}\n\n"
+        "Нажмите категорию, чтобы включить или выключить её."
+    )
+
+
+async def _collect_unseen_recent_orders(
+    *,
+    log_context: str,
+    include_order: OrderPredicate,
+) -> tuple[list[dict], set[str]]:
+    seen = load_seen()
+    fresh: list[dict] = []
+    page = FIRST_PAGE
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        token = await _get_kwork_token(session, log_context)
+        if not token:
+            return [], seen
+
+        while True:
+            result = await fetch_page_result(session, page, token=token, category_ids=active_categories())
+            if not result.ok:
+                logger.error("Could not fetch Kwork page %s: %s", page, result.error)
+                break
+
+            projects = result.projects
+            last_page = result.last_page
+            fresh.extend(project for project in projects if include_order(project, seen))
+
+            has_recent_projects = any(is_recent(project) for project in projects)
+            if page >= last_page or not has_recent_projects:
+                break
+
+            page += 1
+            await asyncio.sleep(PAGE_REQUEST_PAUSE_SECONDS)
+
+    return fresh, seen
+
+
+async def _collect_unseen_recent_orders_with_sdk(
+    *,
+    include_order: OrderPredicate,
+) -> tuple[list[dict], set[str]] | None:
+    seen = load_seen()
+    fresh: list[dict] = []
+    page = FIRST_PAGE
+
+    try:
+        async with KworkSDKAdapter(_kwork_sdk_config()) as client:
+            while True:
+                projects, last_page = await client.get_projects(page=page, category_ids=active_categories())
+                fresh.extend(project for project in projects if include_order(project, seen))
+
+                has_recent_projects = any(is_recent(project) for project in projects)
+                if page >= last_page or not has_recent_projects:
+                    break
+
+                page += 1
+                await asyncio.sleep(PAGE_REQUEST_PAUSE_SECONDS)
+    except KworkSDKUnavailable:
+        return None
+    except Exception:
+        logger.exception("Kwork SDK project scan failed")
+        return None
+
+    return fresh, seen
+
+
+async def _publish_and_remember(orders: list[dict], seen: set[str]) -> int:
+    if not orders:
+        return 0
+
+    sent_ids = await publish_order_ids(get_bot(), settings.channel_id, orders)
+    if sent_ids:
+        seen.update(sent_ids)
+        save_seen(seen)
+    return len(sent_ids)
 
 
 async def poll_new_orders() -> int:
-    """Fetch pages newest-first, stop when a full page has no unseen recent orders."""
-    seen = load_seen()
-    fresh: list[dict] = []
-    page = 1
+    """Fetch and publish unseen recent Kwork orders."""
 
-    async with aiohttp.ClientSession() as session:
-        token = await get_token(session, settings.kwork_login, settings.kwork_password, settings.kwork_phone)
-        if not token:
-            logger.error("Could not obtain Kwork API token — skipping poll")
-            return 0
-        while True:
-            projects, last_page = await fetch_page(session, page, token=token)
-            new_on_page = [p for p in projects if str(p.get("id")) not in seen and is_recent(p)]
-            fresh.extend(new_on_page)
-
-            # stop if no recent projects on this page at all
-            if not any(is_recent(p) for p in projects) or page >= last_page:
-                break
-            page += 1
-            await asyncio.sleep(1)
-
-    if not fresh:
-        return 0
-
-    for p in fresh:
-        seen.add(str(p["id"]))
-    save_seen(seen)
-    return await publish(bot, settings.channel_id, fresh)
+    async with _poll_lock:
+        with locked_seen_ids():
+            include_order = lambda project, seen_ids: str(project.get("id")) not in seen_ids and is_recent(project)
+            result = await _collect_unseen_recent_orders_with_sdk(include_order=include_order)
+            if result is None:
+                result = await _collect_unseen_recent_orders(log_context="poll", include_order=include_order)
+            orders, seen = result
+            return await _publish_and_remember(orders, seen)
 
 
 async def collect_last_24h() -> int:
-    """Scan all pages and send orders created in the last 24 h."""
-    seen = load_seen()
-    fresh: list[dict] = []
-    page = 1
+    """Fetch and publish unseen Kwork orders from the last 24 hours."""
 
-    async with aiohttp.ClientSession() as session:
-        token = await get_token(session, settings.kwork_login, settings.kwork_password, settings.kwork_phone)
-        if not token:
-            logger.error("Could not obtain Kwork API token — skipping 24h scan")
-            return 0
-        while True:
-            projects, last_page = await fetch_page(session, page, token=token)
-            recent = [p for p in projects if is_recent(p) and str(p.get("id")) not in seen]
-            fresh.extend(recent)
-
-            if page >= last_page or not any(is_recent(p) for p in projects):
-                break
-            page += 1
-            await asyncio.sleep(1)
-
-    if not fresh:
-        return 0
-
-    for p in fresh:
-        seen.add(str(p["id"]))
-    save_seen(seen)
-    return await publish(bot, settings.channel_id, fresh)
+    async with _poll_lock:
+        with locked_seen_ids():
+            include_order = lambda project, seen_ids: is_recent(project) and str(project.get("id")) not in seen_ids
+            result = await _collect_unseen_recent_orders_with_sdk(include_order=include_order)
+            if result is None:
+                result = await _collect_unseen_recent_orders(log_context="24h scan", include_order=include_order)
+            orders, seen = result
+            return await _publish_and_remember(orders, seen)
 
 
 async def polling_loop() -> None:
-    logger.info("Polling loop started — interval %ss", settings.poll_interval)
+    """Run background polling forever."""
+
+    logger.info("Polling loop started, interval %ss", settings.poll_interval)
     while True:
         try:
             count = await poll_new_orders()
@@ -113,6 +335,8 @@ async def polling_loop() -> None:
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message) -> None:
+    """Handle the Telegram /start command."""
+
     if not is_admin(message):
         return
     await message.answer(
@@ -126,23 +350,28 @@ async def cmd_start(message: Message) -> None:
     )
 
 
-@dp.message(lambda m: m.text == "📊 Статус")
+@dp.message(lambda m: m.text == BTN_STATUS)
 async def btn_status(message: Message) -> None:
+    """Handle the status button."""
+
     if not is_admin(message):
         return
     seen = load_seen()
     await message.answer(
         f"<b>Статус</b>\n\n"
         f"Отслежено заказов: {len(seen)}\n"
-        f"Активные category_id: {sorted(CATEGORY_IDS)}\n"
+        f"Профиль категорий: {html.escape(category_profile_title(settings.category_profile), quote=False)}\n"
+        f"Активные category_id: {sorted(active_categories())}\n"
         f"Интервал: {settings.poll_interval} сек.\n"
         f"Канал: {settings.channel_id}",
         parse_mode="HTML",
     )
 
 
-@dp.message(lambda m: m.text == "🔍 Проверить сейчас")
+@dp.message(lambda m: m.text == BTN_CHECK_NOW)
 async def btn_check(message: Message) -> None:
+    """Handle the manual check button."""
+
     if not is_admin(message):
         return
     msg = await message.answer("Проверяю…")
@@ -150,8 +379,10 @@ async def btn_check(message: Message) -> None:
     await msg.edit_text(f"Новых заказов: {count}" if count else "Новых заказов нет.")
 
 
-@dp.message(lambda m: m.text == "📅 Заказы за 24 часа")
+@dp.message(lambda m: m.text == BTN_LAST_24H)
 async def btn_last_24h(message: Message) -> None:
+    """Handle the last-24-hours scan button."""
+
     if not is_admin(message):
         return
     msg = await message.answer("Ищу заказы за последние 24 ч…")
@@ -159,44 +390,94 @@ async def btn_last_24h(message: Message) -> None:
     await msg.edit_text(f"Найдено за 24 ч: {count}" if count else "Новых за 24 ч нет.")
 
 
-@dp.message(lambda m: m.text == "📂 Категории")
+@dp.message(lambda m: m.text == BTN_CATEGORIES)
 async def btn_categories(message: Message) -> None:
+    """Handle the categories button."""
+
     if not is_admin(message):
         return
-    await message.answer(
-        "<b>Отслеживаемые категории:</b>\n\n"
-        "• <code>41</code>       — Скрипты, боты и mini apps\n"
-        "• <code>3587</code>    — Чат-боты\n"
-        "• <code>211</code>     — Парсеры\n"
-        "• <code>7352</code>    — Скрипты\n"
-        "• <code>3934090</code> — Telegram Mini Apps\n"
-        "• <code>4158112</code> — ИИ-боты\n\n"
-        "Изменить: <code>CATEGORY_IDS</code> в src/scraper.py",
+    msg = await message.answer("Обновляю список категорий Kwork…")
+    await refresh_category_catalog()
+    await msg.edit_text(
+        category_selection_text(),
+        reply_markup=category_keyboard(),
         parse_mode="HTML",
     )
 
 
-@dp.message(lambda m: m.text == "🔬 Диагностика")
+@dp.callback_query(lambda c: c.data is not None and c.data.startswith("cat:"))
+async def category_callback(callback: CallbackQuery) -> None:
+    """Handle category selection callbacks."""
+
+    if callback.message is None:
+        await callback.answer()
+        return
+    if not is_admin_id(callback.from_user.id):
+        await callback.answer()
+        return
+
+    parts = (callback.data or "").split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    page = int(parts[-1]) if parts[-1].isdigit() else 0
+
+    if action == "toggle" and len(parts) >= 4:
+        try:
+            category_id = int(parts[2])
+        except ValueError:
+            await callback.answer("Некорректная категория")
+            return
+        enabled = toggle_selected_category(category_id)
+        refresh_active_categories()
+        await callback.answer("Категория включена" if enabled else "Категория выключена")
+    elif action == "reset":
+        save_selected_category_ids(set())
+        refresh_active_categories()
+        await callback.answer("Выбор сброшен")
+    elif action == "refresh":
+        count, error = await refresh_category_catalog()
+        await callback.answer(f"Найдено категорий: {count}" if not error else error[:200])
+    else:
+        await callback.answer()
+
+    await callback.message.edit_text(
+        category_selection_text(),
+        reply_markup=category_keyboard(page),
+        parse_mode="HTML",
+    )
+
+
+@dp.message(lambda m: m.text == BTN_DEBUG)
 async def btn_debug(message: Message) -> None:
+    """Handle the API diagnostics button."""
+
     if not is_admin(message):
         return
     msg = await message.answer("Проверяю API…")
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
 
     try:
-        async with aiohttp.ClientSession() as session:
-            token = await get_token(
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            auth = await get_token_result(
                 session,
                 settings.kwork_login,
                 settings.kwork_password,
                 settings.kwork_phone,
             )
-            if not token:
-                await msg.edit_text("❌ Не удалось получить токен Kwork API.\nПроверьте KWORK_LOGIN / KWORK_PASSWORD / KWORK_PHONE в .env")
+            if not auth.ok:
+                await msg.edit_text(
+                    "❌ Не удалось получить токен Kwork API.\n"
+                    "Проверьте KWORK_LOGIN / KWORK_PASSWORD / KWORK_PHONE в .env"
+                )
                 return
 
-            projects, last_page = await fetch_page(session, 1, token=token)
-    except Exception as e:
-        await msg.edit_text(f"Ошибка запроса: {e}")
+            result = await fetch_page_result(session, FIRST_PAGE, token=auth.token or "", category_ids=active_categories())
+            if not result.ok:
+                await msg.edit_text(f"Ошибка запроса: {result.error}")
+                return
+            projects = result.projects
+            last_page = result.last_page
+    except Exception as exc:
+        await msg.edit_text(f"Ошибка запроса: {exc}")
         return
 
     lines = [
@@ -206,23 +487,29 @@ async def btn_debug(message: Message) -> None:
 
     if projects:
         lines += ["", "<b>Первые 5:</b>"]
-        for p in projects[:5]:
+        for project in projects[:5]:
+            category_id = html.escape(str(project.get("category_id")), quote=False)
+            title = html.escape(str(project.get("title", "?"))[:55], quote=False)
+            date_confirm = html.escape(str(project.get("date_confirm", "—")), quote=False)
             lines.append(
-                f"• [{p.get('category_id')}] {str(p.get('title', '?'))[:55]}\n"
-                f"  date_confirm={p.get('date_confirm', '—')}"
+                f"• [{category_id}] {title}\n"
+                f"  date_confirm={date_confirm}"
             )
     else:
         lines.append("⚠️ Проекты не получены.")
 
     text = "\n".join(lines)
     await msg.delete()
-    for i in range(0, len(text), 4000):
-        await message.answer(text[i:i + 4000], parse_mode="HTML")
+    for i in range(0, len(text), TELEGRAM_MESSAGE_LIMIT):
+        await message.answer(text[i : i + TELEGRAM_MESSAGE_LIMIT], parse_mode="HTML")
 
 
 async def main() -> None:
+    """Start background polling and Telegram updates polling."""
+
+    configure_runtime()
     asyncio.create_task(polling_loop())
-    await dp.start_polling(bot, allowed_updates=["message"])
+    await dp.start_polling(get_bot(), allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":

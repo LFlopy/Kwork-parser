@@ -1,4 +1,4 @@
 aiohttp
 aiogram
 python-dotenv
-orjson
+pykwork==0.0.6

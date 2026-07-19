@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+*.cpython-*
+tests/
+.env
+seen_ids.json
+seen_ids.json.lock
+category_catalog.json
+selected_category_ids.json
