@@ -30,7 +30,7 @@ def _order_id(order: dict) -> str | None:
 
 
 def format_order(project: dict) -> str:
-    """Format one Kwork project as a Telegram HTML message."""
+    """Сформировать HTML-сообщение Telegram для одного заказа Kwork."""
 
     pid = project.get("id", "")
     name = _html_text(project.get("title") or "Без названия")
@@ -52,7 +52,7 @@ def format_order(project: dict) -> str:
 
 
 async def publish_order_ids(bot: Bot, channel_id: str, orders: list[dict]) -> set[str]:
-    """Publish orders and return ids of successfully sent messages."""
+    """Опубликовать заказы и вернуть id успешно отправленных сообщений."""
 
     sent_ids: set[str] = set()
     for order in orders:
@@ -68,7 +68,7 @@ async def publish_order_ids(bot: Bot, channel_id: str, orders: list[dict]) -> se
 
 
 async def publish(bot: Bot, channel_id: str, orders: list[dict]) -> int:
-    """Publish orders and return the number of successfully sent messages."""
+    """Опубликовать заказы и вернуть количество успешно отправленных сообщений."""
 
     sent_ids = await publish_order_ids(bot, channel_id, orders)
     return len(sent_ids)

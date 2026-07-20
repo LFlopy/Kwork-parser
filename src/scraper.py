@@ -42,7 +42,7 @@ HEADERS: dict[str, str] = {}
 
 @dataclass(frozen=True, slots=True)
 class PageFetchResult:
-    """Kwork projects page response with error context."""
+    """Ответ страницы заказов Kwork с контекстом ошибки."""
 
     projects: list[dict]
     last_page: int = DEFAULT_LAST_PAGE
@@ -50,35 +50,35 @@ class PageFetchResult:
 
     @property
     def ok(self) -> bool:
-        """Return whether page fetching succeeded."""
+        """Проверить, успешно ли загружена страница."""
 
         return self.error is None
 
 
 @dataclass(frozen=True, slots=True)
 class AuthResult:
-    """Kwork authentication response with error context."""
+    """Ответ авторизации Kwork с контекстом ошибки."""
 
     token: str | None = None
     error: str | None = None
 
     @property
     def ok(self) -> bool:
-        """Return whether authentication succeeded."""
+        """Проверить, успешна ли авторизация."""
 
         return self.token is not None and self.error is None
 
 
 @dataclass(frozen=True, slots=True)
 class CategoryDiscoveryResult:
-    """Discovered Kwork categories with error context."""
+    """Найденные категории Kwork с контекстом ошибки."""
 
     categories: dict[int, Category]
     error: str | None = None
 
     @property
     def ok(self) -> bool:
-        """Return whether category discovery succeeded."""
+        """Проверить, успешно ли найдены категории."""
 
         return self.error is None
 
@@ -126,7 +126,7 @@ async def get_token(
     password: str,
     phone: str,
 ) -> str | None:
-    """Authenticate against api.kwork.ru and return a session token."""
+    """Авторизоваться в api.kwork.ru и вернуть session token."""
     result = await get_token_result(session, login, password, phone)
     return result.token
 
@@ -137,7 +137,7 @@ async def get_token_result(
     password: str,
     phone: str,
 ) -> AuthResult:
-    """Authenticate against api.kwork.ru with explicit error context."""
+    """Авторизоваться в api.kwork.ru с явным контекстом ошибки."""
 
     headers = _auth_headers()
 
@@ -212,7 +212,7 @@ def _parse_date(project: dict) -> datetime | None:
 
 
 def is_recent(project: dict, hours: int = RECENT_HOURS) -> bool:
-    """Check whether a Kwork project belongs to the recent polling window."""
+    """Проверить, попадает ли заказ Kwork в актуальное окно мониторинга."""
 
     dt = _parse_date(project)
     return dt is None or dt >= datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -229,7 +229,7 @@ async def fetch_page(
     token: str = "",
     category_ids: set[int] | None = None,
 ) -> tuple[list[dict], int]:
-    """Fetch one page of buyer orders from the private Kwork API."""
+    """Загрузить одну страницу заказов из приватного API Kwork."""
     result = await fetch_page_result(session, page, token=token, category_ids=category_ids)
     return result.projects, result.last_page
 
@@ -241,7 +241,7 @@ async def fetch_page_result(
     token: str = "",
     category_ids: set[int] | None = None,
 ) -> PageFetchResult:
-    """Fetch one page of buyer orders with explicit error context."""
+    """Загрузить одну страницу заказов с явным контекстом ошибки."""
 
     try:
         active_category_ids = category_ids if category_ids is not None else CATEGORY_IDS
@@ -294,7 +294,7 @@ async def discover_categories(
     *,
     token: str,
 ) -> CategoryDiscoveryResult:
-    """Discover Kwork categories available to the current account."""
+    """Найти категории Kwork, доступные текущему аккаунту."""
 
     categories = dict(CATEGORY_CATALOG)
     favorites, favorites_error = await _post_api(
@@ -377,6 +377,6 @@ def _to_int(value: object) -> int | None:
 
 
 def category_stats(html: str) -> str:
-    """Return legacy category diagnostics text."""
+    """Вернуть legacy-текст диагностики категорий."""
 
     return "Диагностика: бот использует API вместо HTML-парсинга."

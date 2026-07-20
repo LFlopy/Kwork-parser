@@ -1,34 +1,32 @@
-# Kwork Category Selection
+# Подбор категорий Kwork
 
-## Sources checked
+## Проверенные источники
 
-- Official Kwork category tree: https://kwork.ru/categories
-- English Kwork category tree: https://kwork.com/categories
-- Unofficial GitHub wrapper for Kwork closed API: https://github.com/CrazyMan-IK/kwork-api
-- GitHub example with projects and favourite categories methods: https://github.com/CrazyMan-IK/kwork-api/blob/main/examples/api_example.js
-- Habr Q&A and Reddit search were checked for Kwork-specific category ids, but no reliable technical list of Kwork project `category_id` values was found.
+- Официальный каталог Kwork: https://kwork.ru/categories
+- Английский каталог Kwork: https://kwork.com/categories
+- Неофициальная библиотека Kwork API на GitHub: https://github.com/CrazyMan-IK/kwork-api
+- Пример методов `getProjects()` и `getFavouriteCategories()`: https://github.com/CrazyMan-IK/kwork-api/blob/main/examples/api_example.js
+- Habr Q&A и Reddit были проверены на наличие готового списка `category_id`, но надёжного технического справочника по id категорий Kwork там не нашлось.
 
-## Runtime selection model
+## Как бот выбирает категории
 
-The bot discovers category ids during runtime and stores them locally. The Telegram button `📂 Категории` refreshes the catalog from Kwork API data and shows inline toggle buttons for choosing categories.
+Бот получает категории во время работы и сохраняет их локально. Кнопка `📂 Категории` обновляет каталог через Kwork API и показывает inline-кнопки для включения или отключения категорий.
 
-Selected ids are stored in `selected_category_ids.json`. The discovered catalog is stored in `category_catalog.json`.
+Выбранные id хранятся в `selected_category_ids.json`. Найденный каталог хранится в `category_catalog.json`.
 
-The `.env` category options are only a fallback before the user makes a selection in the bot.
+Переменные `.env`, связанные с категориями, используются только как fallback до первого выбора в Telegram.
 
-Active categories are resolved in this order:
+Порядок выбора активных категорий:
 
-1. If `selected_category_ids.json` contains ids, use them.
-2. Otherwise `CATEGORY_IDS` fully replaces any preset when it is not empty.
-3. Otherwise `CATEGORY_PROFILE` selects a preset.
-4. `CATEGORY_EXTRA_IDS` adds ids to the fallback set.
-5. `CATEGORY_EXCLUDE_IDS` removes ids from the fallback set.
+1. Если в `selected_category_ids.json` есть id, используются они.
+2. Иначе, если задан `CATEGORY_IDS`, он полностью заменяет профиль.
+3. Иначе используется профиль из `CATEGORY_PROFILE`.
+4. `CATEGORY_EXTRA_IDS` добавляет id к fallback-набору.
+5. `CATEGORY_EXCLUDE_IDS` удаляет id из fallback-набора.
 
-Available presets:
+Доступные fallback-профили:
 
-- `automation` - scripts, parsers, bots, Telegram Mini Apps, AI bots.
-- `parsers` - parser orders only.
-- `bots` - chatbots, Telegram Mini Apps, AI bots.
-- `scripts` - scripts and Telegram Mini Apps.
-
-Use `CATEGORY_EXTRA_IDS` only as a startup fallback. Normal category selection should be done from the Telegram UI.
+- `automation` - скрипты, парсеры, боты, Telegram Mini Apps и ИИ-боты.
+- `parsers` - только парсеры.
+- `bots` - чат-боты, Telegram Mini Apps и ИИ-боты.
+- `scripts` - скрипты и mini apps.

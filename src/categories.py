@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class Category:
-    """Kwork category metadata used for order filtering."""
+    """Метаданные категории Kwork для фильтрации заказов."""
 
     id: int
     name: str
@@ -13,7 +13,7 @@ class Category:
 
 @dataclass(frozen=True, slots=True)
 class CategoryProfile:
-    """Reusable category selection preset."""
+    """Переиспользуемый профиль выбора категорий."""
 
     key: str
     title: str
@@ -56,7 +56,7 @@ CATEGORY_PROFILES: dict[str, CategoryProfile] = {
 
 
 def parse_category_ids(raw: str, *, source: str = "category ids") -> set[int]:
-    """Parse comma-separated category ids."""
+    """Разобрать список id категорий, разделённых запятыми."""
 
     try:
         return {int(value.strip()) for value in raw.split(",") if value.strip()}
@@ -71,7 +71,7 @@ def resolve_category_ids(
     extra_ids: str = "",
     exclude_ids: str = "",
 ) -> set[int]:
-    """Resolve active category ids from profile and optional overrides."""
+    """Получить активные id категорий из профиля и необязательных переопределений."""
 
     if category_ids.strip():
         selected = parse_category_ids(category_ids, source="CATEGORY_IDS")
@@ -87,13 +87,13 @@ def resolve_category_ids(
 
 
 def describe_category(category_id: int) -> str:
-    """Return display name for a known or custom category id."""
+    """Вернуть отображаемое название известной или пользовательской категории."""
 
     category = CATEGORY_CATALOG.get(category_id)
     return category.name if category else "Пользовательская категория"
 
 
 def category_profile_title(profile: str) -> str:
-    """Return display title for a category profile."""
+    """Вернуть отображаемое название профиля категорий."""
 
     return CATEGORY_PROFILES[profile].title

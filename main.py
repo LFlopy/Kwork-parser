@@ -65,19 +65,19 @@ MAIN_KB = ReplyKeyboardMarkup(
 
 
 def is_admin(message: Message) -> bool:
-    """Check whether the incoming Telegram message was sent by an admin."""
+    """Проверить, отправлено ли входящее сообщение администратором."""
 
     return message.from_user is not None and is_admin_id(message.from_user.id)
 
 
 def is_admin_id(user_id: int) -> bool:
-    """Check whether Telegram user id belongs to a configured admin."""
+    """Проверить, относится ли Telegram user id к настроенным администраторам."""
 
     return user_id in settings.admin_ids
 
 
 def configure_runtime(app_settings: Settings | None = None) -> None:
-    """Configure validated settings, Telegram bot and active categories."""
+    """Настроить валидированные параметры, Telegram-бота и активные категории."""
 
     global bot, settings, _active_category_ids
 
@@ -89,7 +89,7 @@ def configure_runtime(app_settings: Settings | None = None) -> None:
 
 
 def active_categories() -> set[int]:
-    """Return category ids used by this bot process."""
+    """Вернуть id категорий, которые использует текущий процесс бота."""
 
     selected_category_ids = load_selected_category_ids()
     if selected_category_ids:
@@ -98,7 +98,7 @@ def active_categories() -> set[int]:
 
 
 def refresh_active_categories() -> None:
-    """Refresh active categories from user selection storage."""
+    """Обновить активные категории из хранилища выбора пользователя."""
 
     global _active_category_ids
 
@@ -107,12 +107,12 @@ def refresh_active_categories() -> None:
 
 
 def get_bot() -> Bot:
-    """Return the configured Telegram bot instance."""
+    """Вернуть настроенный экземпляр Telegram-бота."""
 
     if bot is None:
         configure_runtime()
     if bot is None:
-        raise RuntimeError("Telegram bot is not configured")
+        raise RuntimeError("Telegram-бот не настроен")
     return bot
 
 
@@ -124,7 +124,7 @@ async def _get_kwork_token(session: aiohttp.ClientSession, log_context: str) -> 
 
 
 async def refresh_category_catalog() -> tuple[int, str | None]:
-    """Fetch Kwork categories discovered from API data and save them locally."""
+    """Загрузить категории Kwork из API и сохранить их локально."""
 
     global _category_catalog
 
@@ -173,7 +173,7 @@ def _kwork_sdk_config() -> KworkSDKConfig:
 
 
 def category_keyboard(page: int = 0) -> InlineKeyboardMarkup:
-    """Build inline keyboard for category selection."""
+    """Собрать inline-клавиатуру для выбора категорий."""
 
     categories = sorted(_category_catalog.values(), key=lambda item: (item.group, item.name, item.id))
     selected = load_selected_category_ids()
@@ -205,7 +205,7 @@ def category_keyboard(page: int = 0) -> InlineKeyboardMarkup:
 
 
 def category_selection_text() -> str:
-    """Build category selection summary."""
+    """Собрать текст со сводкой выбора категорий."""
 
     selected = load_selected_category_ids()
     active = sorted(active_categories())
@@ -294,7 +294,7 @@ async def _publish_and_remember(orders: list[dict], seen: set[str]) -> int:
 
 
 async def poll_new_orders() -> int:
-    """Fetch and publish unseen recent Kwork orders."""
+    """Загрузить и опубликовать новые актуальные заказы Kwork."""
 
     async with _poll_lock:
         with locked_seen_ids():
@@ -307,7 +307,7 @@ async def poll_new_orders() -> int:
 
 
 async def collect_last_24h() -> int:
-    """Fetch and publish unseen Kwork orders from the last 24 hours."""
+    """Загрузить и опубликовать новые заказы Kwork за последние 24 часа."""
 
     async with _poll_lock:
         with locked_seen_ids():
@@ -320,7 +320,7 @@ async def collect_last_24h() -> int:
 
 
 async def polling_loop() -> None:
-    """Run background polling forever."""
+    """Постоянно выполнять фоновую проверку заказов."""
 
     logger.info("Polling loop started, interval %ss", settings.poll_interval)
     while True:
@@ -335,7 +335,7 @@ async def polling_loop() -> None:
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message) -> None:
-    """Handle the Telegram /start command."""
+    """Обработать команду Telegram /start."""
 
     if not is_admin(message):
         return
@@ -352,7 +352,7 @@ async def cmd_start(message: Message) -> None:
 
 @dp.message(lambda m: m.text == BTN_STATUS)
 async def btn_status(message: Message) -> None:
-    """Handle the status button."""
+    """Обработать кнопку статуса."""
 
     if not is_admin(message):
         return
@@ -370,7 +370,7 @@ async def btn_status(message: Message) -> None:
 
 @dp.message(lambda m: m.text == BTN_CHECK_NOW)
 async def btn_check(message: Message) -> None:
-    """Handle the manual check button."""
+    """Обработать кнопку ручной проверки."""
 
     if not is_admin(message):
         return
@@ -381,7 +381,7 @@ async def btn_check(message: Message) -> None:
 
 @dp.message(lambda m: m.text == BTN_LAST_24H)
 async def btn_last_24h(message: Message) -> None:
-    """Handle the last-24-hours scan button."""
+    """Обработать кнопку сканирования за последние 24 часа."""
 
     if not is_admin(message):
         return
@@ -392,7 +392,7 @@ async def btn_last_24h(message: Message) -> None:
 
 @dp.message(lambda m: m.text == BTN_CATEGORIES)
 async def btn_categories(message: Message) -> None:
-    """Handle the categories button."""
+    """Обработать кнопку выбора категорий."""
 
     if not is_admin(message):
         return
@@ -407,7 +407,7 @@ async def btn_categories(message: Message) -> None:
 
 @dp.callback_query(lambda c: c.data is not None and c.data.startswith("cat:"))
 async def category_callback(callback: CallbackQuery) -> None:
-    """Handle category selection callbacks."""
+    """Обработать callback-и выбора категорий."""
 
     if callback.message is None:
         await callback.answer()
@@ -448,7 +448,7 @@ async def category_callback(callback: CallbackQuery) -> None:
 
 @dp.message(lambda m: m.text == BTN_DEBUG)
 async def btn_debug(message: Message) -> None:
-    """Handle the API diagnostics button."""
+    """Обработать кнопку диагностики API."""
 
     if not is_admin(message):
         return
@@ -505,7 +505,7 @@ async def btn_debug(message: Message) -> None:
 
 
 async def main() -> None:
-    """Start background polling and Telegram updates polling."""
+    """Запустить фоновый мониторинг и polling обновлений Telegram."""
 
     configure_runtime()
     asyncio.create_task(polling_loop())

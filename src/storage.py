@@ -17,12 +17,12 @@ LOCK_RETRY_DELAY_SECONDS = 0.1
 
 
 class SeenIdsLockTimeout(TimeoutError):
-    """Raised when seen ids storage lock cannot be acquired."""
+    """Ошибка при невозможности получить lock хранилища опубликованных заказов."""
 
 
 @contextmanager
 def locked_seen_ids(timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
-    """Acquire an inter-process lock for seen ids read-modify-write operations."""
+    """Получить межпроцессный lock для операций чтения-изменения-записи seen ids."""
 
     _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout
@@ -45,7 +45,7 @@ def locked_seen_ids(timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS) -> Iterator[N
 
 
 def load() -> set[str]:
-    """Load ids of orders that were already published."""
+    """Загрузить id заказов, которые уже были опубликованы."""
 
     if not _FILE.exists():
         return set()
@@ -62,7 +62,7 @@ def load() -> set[str]:
 
 
 def save(ids: set[str]) -> None:
-    """Persist ids of orders that were already published."""
+    """Сохранить id заказов, которые уже были опубликованы."""
 
     _FILE.parent.mkdir(parents=True, exist_ok=True)
 

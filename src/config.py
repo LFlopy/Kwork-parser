@@ -20,7 +20,7 @@ def _get_int_env(name: str, default: int) -> int:
 
 @dataclass
 class Settings:
-    """Application settings loaded from environment variables."""
+    """Настройки приложения, загружаемые из переменных окружения."""
 
     bot_token: str = field(default_factory=lambda: os.getenv("BOT_TOKEN", ""))
     channel_id: str = field(default_factory=lambda: os.getenv("CHANNEL_ID", ""))
@@ -39,7 +39,7 @@ class Settings:
 
     @cached_property
     def admin_ids(self) -> tuple[int, ...]:
-        """Return allowed Telegram admin ids."""
+        """Вернуть id Telegram-пользователей с доступом администратора."""
 
         try:
             return tuple(int(x.strip()) for x in self._admin_ids_raw.split(",") if x.strip())
@@ -47,12 +47,12 @@ class Settings:
             raise ValueError("ADMIN_IDS must be a comma-separated list of integer Telegram user ids") from exc
 
     def admin_id_list(self) -> list[int]:
-        """Return allowed Telegram admin ids as a list for compatibility."""
+        """Вернуть id администраторов списком для обратной совместимости."""
 
         return list(self.admin_ids)
 
     def missing_required(self) -> list[str]:
-        """Return names of required environment variables that are not configured."""
+        """Вернуть имена обязательных переменных окружения, которые не настроены."""
 
         required = {
             "BOT_TOKEN": self.bot_token,
@@ -65,7 +65,7 @@ class Settings:
         return [name for name, value in required.items() if not value.strip()]
 
     def validate(self) -> None:
-        """Validate settings and raise a clear startup error when they are invalid."""
+        """Проверить настройки и выбросить понятную ошибку запуска при проблемах."""
 
         missing = self.missing_required()
         if missing:
@@ -75,7 +75,7 @@ class Settings:
         self.active_category_ids()
 
     def active_category_ids(self) -> set[int]:
-        """Return category ids selected for Kwork order polling."""
+        """Вернуть id категорий, выбранные для мониторинга заказов Kwork."""
 
         return resolve_category_ids(
             self.category_profile,

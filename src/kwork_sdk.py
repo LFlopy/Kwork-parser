@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class KworkSDKConfig:
-    """Credentials and options for the optional Kwork SDK adapter."""
+    """Учётные данные и настройки для опционального адаптера Kwork SDK."""
 
     login: str
     password: str
@@ -20,11 +20,11 @@ class KworkSDKConfig:
 
 
 class KworkSDKUnavailable(RuntimeError):
-    """Raised when no supported Kwork SDK package is installed."""
+    """Ошибка, когда не установлен поддерживаемый пакет Kwork SDK."""
 
 
 class KworkSDKAdapter:
-    """Adapter over optional Kwork SDK packages."""
+    """Адаптер над опциональными пакетами Kwork SDK."""
 
     def __init__(self, config: KworkSDKConfig) -> None:
         self._config = config
@@ -61,7 +61,7 @@ class KworkSDKAdapter:
             await _maybe_await(close())
 
     async def get_projects(self, *, page: int, category_ids: set[int]) -> tuple[list[dict], int]:
-        """Return one page of Kwork projects."""
+        """Вернуть одну страницу заказов Kwork."""
 
         client = self._require_client()
         categories = ",".join(str(category_id) for category_id in sorted(category_ids))
@@ -85,7 +85,7 @@ class KworkSDKAdapter:
         return projects, last_page
 
     async def get_categories(self) -> dict[int, Category]:
-        """Return categories from Kwork SDK."""
+        """Вернуть категории из Kwork SDK."""
 
         client = self._require_client()
         if not hasattr(client, "get_categories"):
@@ -101,7 +101,7 @@ class KworkSDKAdapter:
 
 
 def is_sdk_available() -> bool:
-    """Return whether a supported Kwork SDK package can be imported."""
+    """Проверить, можно ли импортировать поддерживаемый пакет Kwork SDK."""
 
     try:
         _load_client_class()

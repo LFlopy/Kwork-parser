@@ -14,7 +14,7 @@ _SELECTED_FILE = Path(os.getenv("SELECTED_CATEGORY_IDS_FILE", _PROJECT_ROOT / "s
 
 
 def load_catalog() -> dict[int, Category]:
-    """Load discovered Kwork categories."""
+    """Загрузить найденные категории Kwork."""
 
     if not _CATALOG_FILE.exists():
         return dict(CATEGORY_CATALOG)
@@ -40,7 +40,7 @@ def load_catalog() -> dict[int, Category]:
 
 
 def save_catalog(categories: dict[int, Category]) -> None:
-    """Persist discovered Kwork categories."""
+    """Сохранить найденные категории Kwork."""
 
     payload = [
         {
@@ -55,7 +55,7 @@ def save_catalog(categories: dict[int, Category]) -> None:
 
 
 def load_selected_category_ids() -> set[int]:
-    """Load category ids selected by the bot user."""
+    """Загрузить id категорий, выбранные пользователем бота."""
 
     if not _SELECTED_FILE.exists():
         return set()
@@ -72,13 +72,13 @@ def load_selected_category_ids() -> set[int]:
 
 
 def save_selected_category_ids(category_ids: set[int]) -> None:
-    """Persist category ids selected by the bot user."""
+    """Сохранить id категорий, выбранные пользователем бота."""
 
     _write_json(_SELECTED_FILE, sorted(category_ids))
 
 
 def toggle_selected_category(category_id: int) -> bool:
-    """Toggle selected category id and return whether it is now enabled."""
+    """Переключить категорию и вернуть, включена ли она после переключения."""
 
     selected = load_selected_category_ids()
     if category_id in selected:
